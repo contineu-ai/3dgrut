@@ -70,6 +70,25 @@ fromOpenCVFisheyeCameraModelParameters(std::array<uint64_t, 2> _resolution,
     return params;
 }
 
+threedgut::CameraModelParameters
+fromSphericalCameraModelParameters(std::array<uint64_t, 2> _resolution,
+                                    threedgut::TSensorModel::ShutterType shutter_type,
+                                    std::array<float, 2> principal_point,
+                                    std::array<float, 1> focal_length,
+                                    float max_angle) {
+    threedgut::CameraModelParameters params;
+    params.shutterType = static_cast<threedgut::TSensorModel::ShutterType>(shutter_type);
+    params.modelType   = threedgut::TSensorModel::SphericalModel;
+    static_assert(sizeof(principal_point) == sizeof(tcnn::vec2), "[3dgut] typing size mismatch");
+    static_assert(sizeof(focal_length) == sizeof(tcnn::vec1), "[3dgut] typing size mismatch");
+    // static_assert(sizeof(radial_coeffs) == sizeof(tcnn::vec4), "[3dgut] typing size mismatch");
+    params.sphericalParams.principalPoint = *reinterpret_cast<const tcnn::vec2*>(principal_point.data());
+    params.sphericalParams.focalLength    = *reinterpret_cast<const tcnn::vec2*>(focal_length.data());
+    // params.sphericalParams.radialCoeffs   = *reinterpret_cast<const tcnn::vec4*>(radial_coeffs.data());
+    params.sphericalParams.maxAngle       = max_angle;
+    return params;
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
     pybind11::class_<SplatRaster>(m, "SplatRaster")
@@ -103,5 +122,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           py::arg("principal_point"),
           py::arg("focal_length"),
           py::arg("radial_coeffs"),
+          py::arg("max_angle"));
+
+    m.def("fromSphericalCameraModelParameters", &fromSphericalCameraModelParameters,
+          py::arg("resolution"),
+          py::arg("shutter_type"),
+          py::arg("principal_point"),
+          py::arg("focal_length"),
           py::arg("max_angle"));
 }

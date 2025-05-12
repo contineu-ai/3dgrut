@@ -17,7 +17,7 @@ import os
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Optional, Union
-
+from matplotlib import pyplot as plt
 import numpy as np
 
 import torch
@@ -102,7 +102,7 @@ class Trainer3DGRUT:
         conf.import_ply.path = ply_path
         return Trainer3DGRUT(conf)
 
-    @torch.cuda.nvtx.range("setup-trainer")
+    @torch.cuda.nvtx.range("setup-trainer") # checks the time taken to setup the trainer on GPU
     def __init__(self, conf: DictConfig, device=None):
         """Set up a new training session, or continue an existing one based on configuration"""
 
@@ -704,9 +704,13 @@ class Trainer3DGRUT:
 
             # Compute the outputs of a single batch
             with torch.cuda.nvtx.range(f"train_{global_step}_fwd"):
+                print("-" * 20)
                 profilers["inference"].start()
                 outputs = model(gpu_batch, train=True, frame_id=global_step)
                 profilers["inference"].end()
+                print(outputs.keys())
+                print(outputs['pred_rgb'].shape) # torch.Size([1, 1080, 2160, 3])
+                print("-" * 20)
 
             # Compute the losses of a single batch
             with torch.cuda.nvtx.range(f"train_{global_step}_loss"):

@@ -39,7 +39,9 @@ def load_3dgut_plugin(conf):
     if _3dgut_plugin is None:
         try:
             from . import lib3dgut_cc as tdgut  # type: ignore
+            print("3DGUT plugin loaded from lib3dgut_cc")
         except ImportError:
+            print("3DGUT plugin not found, building from source...")
             from .setup_3dgut import setup_3dgut
 
             setup_3dgut(conf)
@@ -422,6 +424,16 @@ class Tracer:
                 principal_point=K["principal_point"],
                 focal_length=K["focal_length"],
                 radial_coeffs=K["radial_coeffs"],
+                max_angle=K["max_angle"],
+            )
+            return camera_model_parameters, pose_model.get_sensor_pose()
+
+        elif (K := gpu_batch.intrinsics_SphericalCameraModelParameters) is not None:
+            camera_model_parameters = _3dgut_plugin.fromSphericalCameraModelParameters(
+                resolution=K["resolution"],
+                shutter_type=SHUTTER_TYPE_MAP[K["shutter_type"]],
+                principal_point=K["principal_point"],
+                focal_length=[K["focal_length"]], # focal length is float but c++ requires array of length 1
                 max_angle=K["max_angle"],
             )
             return camera_model_parameters, pose_model.get_sensor_pose()

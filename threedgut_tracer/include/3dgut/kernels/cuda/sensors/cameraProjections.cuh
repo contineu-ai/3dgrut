@@ -127,6 +127,31 @@ static inline __device__ bool projectPoint(const OpenCVFisheyeProjectionParamete
     return (theta < sensorParams.maxAngle) && withinResolution(resolution, tolerance, projected);
 }
 
+static inline __device__ bool projectPoint(const SphericalProjectionParameters& sensorParams,
+                                           const tcnn::ivec2& resolution,
+                                           const tcnn::vec3& position,
+                                           float tolerance,
+                                           tcnn::vec2& projected) {
+    constexpr float eps   = __FLT_EPSILON__;
+    const float rho       = fmaxf(tcnn::length(position.xy()), eps);
+    const float thetaFull = atan2f(rho, position.z);
+    // Limit angles to max_angle to prevent projected points to leave valid cone around max_angle.
+    // In particular for omnidirectional cameras, this prevents points outside the FOV to be
+    // wrongly projected to in-image-domain points because of badly constrained polynomials outside
+    // the effective FOV (which is different to the image boundaries).
+    //
+    // These FOV-clamped projections will be marked as *invalid*
+    const float theta = fminf(thetaFull, sensorParams.maxAngle);
+    // Evaluate forward polynomial
+    // (radial distances to the principal point in the normalized image domain (up to focal length scales))
+    const float theta2 = theta * theta;
+    const float delta =
+        (theta * (evalPolyHorner<4>(sensorParams.radialCoeffs, theta2) * theta2 + 1.0f)) / rho;
+    projected = sensorParams.focalLength * position.xy() * delta + sensorParams.principalPoint;
+
+    return (theta < sensorParams.maxAngle) && withinResolution(resolution, tolerance, projected);
+}
+
 static inline __device__ bool projectPoint(const TSensorModel& sensorModel,
                                            const tcnn::ivec2& resolution,
                                            const tcnn::vec3& position,
@@ -137,6 +162,8 @@ static inline __device__ bool projectPoint(const TSensorModel& sensorModel,
         return projectPoint(sensorModel.ocvPinholeParams, resolution, position, tolerance, projected);
     case TSensorModel::OpenCVFisheyeModel:
         return projectPoint(sensorModel.ocvFisheyeParams, resolution, position, tolerance, projected);
+    case TSensorModel::SphericalModel:
+        return projectPoint(sensorModel.sphericalParams, resolution, position, tolerance, projected);
     default:
         projected = tcnn::vec2::zero();
         return false;

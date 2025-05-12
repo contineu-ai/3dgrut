@@ -44,5 +44,9 @@ ENV FORCE_CUDA=1
 WORKDIR /workspace
 COPY . .
 
+# Add this line to fix line endings
+RUN sed -i 's/\r$//' ./install_env.sh
+
+RUN conda clean --all -y
 RUN CUDA_VERSION=$CUDA_VERSION bash ./install_env.sh 3dgrut WITH_GCC11 
 RUN echo "conda activate 3dgrut" >> ~/.bashrc

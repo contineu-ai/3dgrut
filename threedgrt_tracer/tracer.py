@@ -36,11 +36,13 @@ def load_3dgrt_plugin(conf):
     if _3dgrt_plugin is None:
         try:
             from . import lib3dgrt_cc as tdgrt  # type: ignore
+            print(f"🔆 Using precompiled 3DGRt plugin: {tdgrt.__file__}")
         except ImportError:
             from .setup_3dgrt import setup_3dgrt
 
             setup_3dgrt(conf)
             import lib3dgrt_cc as tdgrt  # type: ignore
+            print(f"🔆 Using compiled 3DGRt plugin: {tdgrt.__file__}")
         _3dgrt_plugin = tdgrt
 
 

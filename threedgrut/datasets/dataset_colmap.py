@@ -40,7 +40,9 @@ from .camera_models import (
     ShutterType,
     OpenCVPinholeCameraModelParameters,
     OpenCVFisheyeCameraModelParameters,
+    SphericalCameraModelParameters,
     image_points_to_camera_rays,
+    image_points_to_camera_rays_spherical,
     pixels_to_image_points,
 )
 
@@ -73,8 +75,8 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
         indices = np.arange(self.n_frames)
 
         # If test_split_interval is set, every test_split_interval frame will be excluded from the training set
-        # If test_split_interval is non-positive, all images will be used for training and testing
-        if self.test_split_interval > 0:
+        # If test_split_interval is negative, all images will be used for training and testing
+        if self.test_split_interval >= 0:
             if split == "train":
                 indices = np.mod(indices, self.test_split_interval) != 0
             else:
@@ -91,6 +93,7 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
         self.n_frames = self.poses.shape[0]
 
     def load_intrinsics_and_extrinsics(self):
+        # TODO: Split the reads to individual 
         try:
             cameras_extrinsic_file = os.path.join(self.path, "sparse/0", "images.bin")
             cameras_intrinsic_file = os.path.join(self.path, "sparse/0", "cameras.bin")
@@ -118,8 +121,8 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
             os.path.basename(self.cam_extrinsics[0].name),
         )
         image = np.asarray(Image.open(image_path))
-        self.image_h = image.shape[0]
-        self.image_w = image.shape[1]
+        self.image_h = image.shape[0] # 1080
+        self.image_w = image.shape[1] # 2160
         self.scaling_factor = int(
             round(
                 self.cam_intrinsics[self.cam_extrinsics[0].camera_id - 1].height
@@ -197,6 +200,42 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
                 type(params).__name__,
             )
 
+        def create_spherical_camera(params):
+            resolution = np.array([self.image_w, self.image_h]).astype(np.int64)
+            principal_point = params[1:].astype(np.float32)
+            focal_length = params[0].astype(np.float32)
+
+            # Estimate max angle for spherical camera
+            max_radius_pixels = compute_max_radius(
+                resolution.astype(np.float64), principal_point
+            )
+            fov_angle = 2.0 * max_radius_pixels / focal_length
+            max_angle = fov_angle / 2.0
+
+            params = SphericalCameraModelParameters(
+                resolution=resolution,
+                shutter_type=ShutterType.GLOBAL,
+                principal_point=principal_point,
+                focal_length=focal_length,
+                max_angle=max_angle,
+            )
+
+            pixel_coords = torch.tensor(
+                np.stack([u, v], axis=1), dtype=torch.int32, device=self.device
+            )
+            
+            image_points = pixels_to_image_points(pixel_coords)
+            rays_d_cam = image_points_to_camera_rays_spherical(
+                params, image_points, device=self.device
+            )
+
+            rays_o_cam = torch.zeros_like(rays_d_cam)
+            return (params.to_dict(),
+                    rays_o_cam.to(torch.float32).reshape(out_shape), 
+                    rays_d_cam.to(torch.float32).reshape(out_shape),
+                    type(params).__name__
+                )
+
         for intr in self.cam_intrinsics:
             height = intr.height
             width = intr.width
@@ -220,7 +259,12 @@ class ColmapDataset(Dataset, BoundedMultiViewDataset, DatasetVisualization):
                 params = copy.deepcopy(intr.params)
                 params[:4] = params[:4] / self.scaling_factor
                 self.intrinsics[intr.id] = create_fisheye_camera(params)
-
+            
+            elif intr.model == "SPHERICAL":
+                params = copy.deepcopy(intr.params)
+                params = params / self.scaling_factor
+                self.intrinsics[intr.id] = create_spherical_camera(params)
+                
             else:
                 assert (
                     False

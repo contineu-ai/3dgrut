@@ -62,9 +62,8 @@ def camera_to_world_rays(ray_o, ray_d, poses):
     """
     input:
         ray_o_cam [n, 3] - ray origins in the camera coordinate system
-        ray_d_cam [n, 3] - ray origins in the camera coordinate system
-        poses [n, 4,4] - camera to world transformation matrices
-
+        ray_d_cam [n, 3] - ray directions in the camera coordinate system
+        poses [n, 4, 4] - camera to world transformation matrices
     return:
         ray_o [n, 3] - ray origins in the world coordinate system
         ray_d [n, 3] - ray directions in the world coordinate system
@@ -245,6 +244,7 @@ CAMERA_MODELS = {
     CameraModel(model_id=8, model_name="SIMPLE_RADIAL_FISHEYE", num_params=4),
     CameraModel(model_id=9, model_name="RADIAL_FISHEYE", num_params=5),
     CameraModel(model_id=10, model_name="THIN_PRISM_FISHEYE", num_params=12),
+    CameraModel(model_id=11, model_name="SPHERICAL", num_params=3),
 }
 CAMERA_MODEL_IDS = dict(
     [(camera_model.model_id, camera_model) for camera_model in CAMERA_MODELS]
@@ -389,6 +389,8 @@ def read_colmap_intrinsics_binary(path_to_model_file):
                 fid, num_bytes=24, format_char_sequence="iiQQ"
             )
 
+            width, height = 6480, 3240
+
             # Get camera model information
             try:
                 camera_model = CAMERA_MODEL_IDS[model_id]
@@ -401,6 +403,8 @@ def read_colmap_intrinsics_binary(path_to_model_file):
                 num_bytes=8 * camera_model.num_params,
                 format_char_sequence="d" * camera_model.num_params,
             )
+
+            params = [1536.0, 3240, 1620]
 
             # Create camera object
             cameras.append(
@@ -468,7 +472,6 @@ def read_colmap_extrinsics_binary(path_to_model_file):
         for _ in range(num_reg_images):
             # Read image properties (id, rotation, translation, camera_id)
             props = read_next_bytes(fid, num_bytes=64, format_char_sequence="idddddddi")
-
             image_id, *qvec_tvec, camera_id = props
             qvec = np.array(qvec_tvec[:4])
             tvec = np.array(qvec_tvec[4:7])
@@ -504,7 +507,7 @@ def read_colmap_extrinsics_binary(path_to_model_file):
             point3D_ids = np.array(
                 [int(point_data[i + 2]) for i in range(0, len(point_data), 3)]
             )
-
+            
             # Create image object
             images.append(
                 Image(

@@ -35,6 +35,12 @@ struct OpenCVFisheyeProjectionParameters {
     float maxAngle;
 };
 
+struct SphericalProjectionParameters {
+    tcnn::vec2 principalPoint;
+    tcnn::vec1 focalLength;
+    float maxAngle;
+};
+
 struct CameraModelParameters {
     enum ShutterType {
         RollingTopToBottomShutter,
@@ -47,6 +53,7 @@ struct CameraModelParameters {
     enum ModelType {
         OpenCVPinholeModel,
         OpenCVFisheyeModel,
+        SphericalModel,
         EmptyModel,
         Unsupported
     } modelType = EmptyModel;
@@ -54,6 +61,7 @@ struct CameraModelParameters {
     union {
         OpenCVPinholeProjectionParameters ocvPinholeParams;
         OpenCVFisheyeProjectionParameters ocvFisheyeParams;
+        SphericalProjectionParameters sphericalParams;
     };
 };
 

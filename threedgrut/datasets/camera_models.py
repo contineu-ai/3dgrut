@@ -117,6 +117,30 @@ class OpenCVFisheyeCameraModelParameters(
         assert self.radial_coeffs.dtype == np.dtype("float32")
         assert self.max_angle > 0.0
 
+@dataclass
+class SphericalCameraModelParameters(
+    CameraModelParameters, dataclasses_json.DataClassJsonMixin
+):
+    """Represents Spherical camera model parameters"""
+
+    #: U and v coordinate of the principal point, following the :ref:`image coordinate conventions <image_coordinate_conventions>` (float32, [2,])
+    principal_point: np.ndarray
+    #: Focal lengths in u and v direction, resp., mapping (distorted) normalized camera coordinates to image coordinates relative to the principal point (float32, [1,])
+    focal_length: float
+
+    #: Maximal extrinsic ray angle [rad] with the principal direction (float32)
+    max_angle: float = 0.0
+
+    def __post_init__(self):
+        super().__post_init__()
+        assert self.principal_point.shape == (2,)
+        assert self.principal_point.dtype == np.dtype("float32")
+        assert self.principal_point[0] > 0.0 and self.principal_point[1] > 0.0
+        assert self.focal_length.shape == ()
+        assert self.focal_length > 0.0
+        assert self.focal_length.dtype == np.dtype("float32")
+        assert self.max_angle > 0.0
+        assert self.max_angle.dtype == np.dtype("float64")
 
 def _eval_poly_horner(poly_coefficients: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     """Evaluates a polynomial y=f(x) (given by poly_coefficients) at points x using
@@ -190,6 +214,89 @@ def image_points_to_camera_rays(
     assert resolution.dtype == torch.int32
 
     k1, k2, k3, k4 = camera_model_parameters.radial_coeffs[:]
+    # ninth-degree forward polynomial (mapping angles to normalized distances) theta + k1*theta^3 + k2*theta^5 + k3*theta^7 + k4*theta^9
+    forward_poly = torch.tensor(
+        [0, 1, 0, k1, 0, k2, 0, k3, 0, k4], dtype=dtype, device=device
+    )
+    # eighth-degree differential of forward polynomial 1 + 3*k1*theta^2 + 5*k2*theta^4 + 7*k3*theta^8 + 9*k4*theta^8
+    dforward_poly = torch.tensor(
+        [1, 0, 3 * k1, 0, 5 * k2, 0, 7 * k3, 0, 9 * k4], dtype=dtype, device=device
+    )
+
+    # approximate backward poly (mapping normalized distances to angles) *very crudely* by linear interpolation / equidistant angle model (also assuming image-centered principal point)
+    max_normalized_dist = np.max(
+        camera_model_parameters.resolution / 2 / camera_model_parameters.focal_length
+    )
+    approx_backward_poly = torch.tensor(
+        [0, max_angle / max_normalized_dist], dtype=dtype, device=device
+    )
+
+    assert (
+        image_points.is_floating_point()
+    ), "[CameraModel]: image_points must be floating point values"
+    image_points = image_points.to(dtype)
+
+    normalized_image_points = (image_points - principal_point) / focal_length
+    deltas = torch.linalg.norm(normalized_image_points, axis=1, keepdims=True)
+
+    # Evaluate backward polynomial as the inverse of the forward one
+    thetas = _eval_poly_inverse_horner_newton(
+        forward_poly, dforward_poly, approx_backward_poly, newton_iterations, deltas
+    )
+
+    # Compute the camera rays and set the ones at the image center to [0,0,1]
+    cam_rays = torch.hstack(
+        (
+            torch.sin(thetas)
+            * normalized_image_points
+            / torch.maximum(deltas, min_2d_norm),
+            torch.cos(thetas),
+        )
+    )
+    cam_rays[deltas.flatten() < min_2d_norm, :] = torch.tensor([[0, 0, 1]]).to(
+        normalized_image_points
+    )
+
+    return cam_rays
+
+def image_points_to_camera_rays_spherical(
+    camera_model_parameters,
+    image_points,
+    newton_iterations: int = 3,
+    min_2d_norm: float = 1e-6,
+    device: str = "cpu",
+):
+    """
+    Computes the camera ray for each image point, performing an iterative undistortion of the nonlinear distortion model
+    """
+
+    dtype: torch.dtype = torch.float32
+
+    principal_point = torch.tensor(
+        camera_model_parameters.principal_point, dtype=dtype, device=device
+    )
+    focal_length = torch.tensor(
+        camera_model_parameters.focal_length, dtype=dtype, device=device
+    )
+    resolution = torch.tensor(
+        camera_model_parameters.resolution.astype(np.int32), device=device
+    )
+    max_angle = float(camera_model_parameters.max_angle)
+    newton_iterations = newton_iterations
+
+    # 2D pixel-distance threshold
+    assert min_2d_norm > 0, "require positive minimum norm threshold"
+    min_2d_norm = torch.tensor(min_2d_norm, dtype=dtype, device=device)
+
+    assert principal_point.shape == (2,)
+    assert principal_point.dtype == dtype
+    assert focal_length.shape == ()
+    assert focal_length.dtype == dtype
+    assert resolution.shape == (2,)
+    assert resolution.dtype == torch.int32
+
+    # k1, k2, k3, k4 = camera_model_parameters.radial_coeffs[:]
+    k1, k2, k3, k4 = 0, 0, 0, 0
     # ninth-degree forward polynomial (mapping angles to normalized distances) theta + k1*theta^3 + k2*theta^5 + k3*theta^7 + k4*theta^9
     forward_poly = torch.tensor(
         [0, 1, 0, k1, 0, k2, 0, k3, 0, k4], dtype=dtype, device=device
